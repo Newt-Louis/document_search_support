@@ -16,15 +16,7 @@
     <content url="file://$MODULE_DIR$">
       <excludeFolder url="file://$MODULE_DIR$/.venv" />
     </content>
-    <orderEntry type="jdk" jdkName="Python 3.13 (document_search_support)" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="Python 3.12.3 WSL (Ubuntu): (/home/newt-louis/workspaces/my_air_projects/document_search_support/.venv/bin/bin/python)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
-  </component>
-  <component name="TemplatesService">
-    <option name="TEMPLATE_CONFIGURATION" value="Django" />
-    <option name="TEMPLATE_FOLDERS">
-      <list>
-        <option value="$MODULE_DIR$/../document_search_support\templates" />
-      </list>
-    </option>
   </component>
 </module>
