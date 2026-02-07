@@ -1,25 +1,22 @@
-# ingest.py
-import logging
-import sys
+import logging,sys,os
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, StorageContext, Settings
 from llama_index.vector_stores.qdrant import QdrantVectorStore
-from llama_index.embeddings.ollama import OllamaEmbedding
+from llama_index.embeddings.fastembed import FastEmbedEmbedding
 from llama_index.llms.ollama import Ollama
 import qdrant_client
 
-# 1. Cấu hình Log để dễ debug
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
+CACHE_DIR = os.getenv("CACHE_DIR", "../../data/cache")
 
 # 2. Setup Global Settings (Cấu hình toàn cục)
 # KHÔNG dùng OpenAI, chỉ dùng đồ nhà trồng được (Local)
 print(">>> Đang cấu hình kết nối tới Ollama...")
 
 # Model nhúng (Embedding) - Chịu trách nhiệm biến chữ thành số
-Settings.embed_model = OllamaEmbedding(
-    model_name="bge-m3",
-    base_url="http://localhost:11434",
-    ollama_additional_kwargs={"mirostat": 0}
+Settings.embed_model = FastEmbedEmbedding(
+    model_name="intfloat/multilingual-e5-large",
+    cache_dir=CACHE_DIR+"multilingual-e5-large",
 )
 
 # Model ngôn ngữ (LLM) - Dùng để tóm tắt hoặc xử lý metadata nếu cần
