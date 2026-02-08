@@ -37,7 +37,8 @@ class IngestService:
         self.upload_dir = upload_dir
         self.text_splitter = SentenceSplitter(chunk_size=1024, chunk_overlap=200)
 
-    async def _validate_file(self,file:UploadFile):
+    @staticmethod
+    async def _validate_file(file:UploadFile):
         header = await file.read(2048)
         mime_type = magic.from_buffer(header, mime=True)
         logger.info(f">>> Phát hiện file có MIME type: {mime_type}")
@@ -94,20 +95,17 @@ class IngestService:
             total_size = os.path.getsize(file_path)
             processed_size = 0
             yield json.dumps({"status": "processing", "progress": 15, "message": "Đang khởi tạo Pipeline..."}) + "\n"
-            for doc_batch in self._lazy_load_file(file_path,chunk_size_mb=5):
+            for doc_batch, file_progress in self._lazy_load_file(file_path,chunk_size_mb=5):
                 if not doc_batch:
                     continue
-                batch_size = sum([len(d.text.encode('utf-8')) for d in doc_batch])
-                processed_size += batch_size
                 nodes = await pipeline.arun(documents=doc_batch, show_progress=False)
-                percent = 15 + int((processed_size / total_size) * 80)
-                if percent > 95: percent = 95
-                message = json.dumps({
+                ui_percent = 15 + int((file_progress / 100) * 80)
+                if ui_percent > 95: ui_percent = 95
+                yield json.dumps({
                     "status": "processing",
-                    "progress": percent,
-                    "message": f"Đã vector hóa {len(nodes)} đoạn văn bản..."
+                    "progress": ui_percent,
+                    "message": f"Đã vector hóa {len(nodes)} chunks dữ liệu..."
                 }) + "\n"
-                yield message
 
                 del doc_batch
                 del nodes
@@ -120,32 +118,36 @@ class IngestService:
             yield json.dumps({"status": "error", "message": f"Lỗi xử lý AI: {str(e)}"}) + "\n"
             raise HTTPException(status_code=500, detail=f"Lỗi khi Indexing: {str(e)}")
 
-    def _lazy_load_file(self, file_path: str, chunk_size_mb: int = 10) -> Generator[List[Document], None, None]:
+    @staticmethod
+    def _lazy_load_file(file_path: str, chunk_size_mb: int = 10) -> Generator[tuple[List[Document], float], None, None]:
         """
         Đọc file theo từng phần nhỏ (Batch).
         chunk_size_mb: Kích thước mỗi lần đọc (Mặc định 10MB text)
         """
         ext = os.path.splitext(file_path)[1].lower()
+        file_size = os.path.getsize(file_path)
 
         if ext == ".txt":
             # Đọc file Text dòng theo dòng
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                 batch_text = ""
                 current_size = 0
+                while True:
+                    line = f.readline()
+                    if not line: break
 
-                for line in f:
                     batch_text += line
                     current_size += len(line.encode('utf-8'))
 
-                    # Khi đủ 10MB thì yield ra một Document rồi xóa RAM biến batch_text
                     if current_size >= chunk_size_mb * 1024 * 1024:
-                        yield [Document(text=batch_text, metadata={"filename": os.path.basename(file_path)})]
-                        batch_text = ""  # Reset RAM
+                        # Tính % dựa trên vị trí con trỏ file (Bytes read / Total bytes)
+                        progress = min((f.tell() / file_size) * 100, 99)
+                        yield [Document(text=batch_text, metadata={"filename": os.path.basename(file_path)})], progress
+                        batch_text = ""
                         current_size = 0
 
-                # Yield nốt phần còn dư cuối cùng
                 if batch_text:
-                    yield [Document(text=batch_text, metadata={"filename": os.path.basename(file_path)})]
+                    yield [Document(text=batch_text, metadata={"filename": os.path.basename(file_path)})], 100
 
         elif ext == ".csv":
             # Đọc CSV dòng theo dòng
@@ -159,29 +161,33 @@ class IngestService:
                     current_size += len(row_text.encode('utf-8'))
 
                     if current_size >= chunk_size_mb * 1024 * 1024:
-                        yield [Document(text=batch_text, metadata={"filename": os.path.basename(file_path)})]
+                        progress = min((f.tell() / file_size) * 100, 99)
+                        yield [Document(text=batch_text, metadata={"filename": os.path.basename(file_path)})], progress
                         batch_text = ""
                         current_size = 0
                 if batch_text:
-                    yield [Document(text=batch_text, metadata={"filename": os.path.basename(file_path)})]
+                    yield [Document(text=batch_text, metadata={"filename": os.path.basename(file_path)})], 100
 
         elif ext == ".pdf":
             # Với PDF, ta dùng pypdf đọc từng trang
             import pypdf
             reader = pypdf.PdfReader(file_path)
-            for page in reader.pages:
+            total_pages = len(reader.pages)
+            if total_pages == 0: total_pages = 1
+            for i, page in enumerate(reader.pages):
                 text = page.extract_text()
-                # Yield từng trang một. Mỗi trang là 1 Document riêng.
                 if text:
-                    yield [Document(text=text, metadata={"page_label": reader.get_page_number(page),
-                                                         "filename": os.path.basename(file_path)})]
+                    # Mỗi trang là 1 yield. Progress = trang hiện tại / tổng số trang
+                    progress = ((i + 1) / total_pages) * 100
+                    yield [Document(text=text,metadata={"page_label": str(i), "filename": os.path.basename(file_path)})], progress
 
         elif ext == ".xlsx":
             # Quan trọng: read_only=True giúp openpyxl không load hết vào RAM
             # data_only=True để lấy giá trị cuối cùng, không lấy công thức hàm
             wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+            total_sheets = len(wb.sheetnames)
 
-            for sheet in wb:
+            for s_idx, sheet in enumerate(wb):
                 batch_text = ""
                 current_size = 0
                 # Duyệt từng dòng trong sheet. Đây là Generator.
@@ -195,28 +201,29 @@ class IngestService:
 
                     # Kiểm tra ngưỡng chunk_size_mb
                     if current_size >= chunk_size_mb * 1024 * 1024:
-                        yield [Document(text=batch_text,
-                                        metadata={"filename": os.path.basename(file_path), "sheet": sheet.title})]
+                        progress = ((s_idx) / total_sheets) * 100 + 5  # +5 để nó nhích
+                        yield [Document(text=batch_text, metadata={"filename": os.path.basename(file_path), "sheet": sheet.title})], progress
                         batch_text = ""  # Giải phóng RAM
                         current_size = 0
 
                 # Yield phần còn dư của sheet hiện tại
                 if batch_text:
-                    yield [Document(text=batch_text,
-                                    metadata={"filename": os.path.basename(file_path), "sheet": sheet.title})]
+                    progress = ((s_idx + 1) / total_sheets) * 100
+                    yield [Document(text=batch_text,metadata={"filename": os.path.basename(file_path), "sheet": sheet.title})], progress
             wb.close()
 
         elif ext == ".docx":
             from docx import Document as DocxDocument
             # Word file là tập hợp các đoạn văn (Paragraphs)
             doc = DocxDocument(file_path)
+            total_paras = len(doc.paragraphs)  # Lấy tổng số đoạn văn
+            if total_paras == 0: total_paras = 1
             batch_text = ""
             current_size = 0
 
-            for para in doc.paragraphs:
-                text = para.text
-                if not text.strip():
-                    continue  # Bỏ qua đoạn trống
+            for i, para in enumerate(doc.paragraphs):
+                text = para.text.strip()
+                if not text: continue
 
                 text += "\n"
                 batch_text += text
@@ -224,12 +231,13 @@ class IngestService:
 
                 # Kiểm tra ngưỡng chunk_size_mb
                 if current_size >= chunk_size_mb * 1024 * 1024:
-                    yield [Document(text=batch_text, metadata={"filename": os.path.basename(file_path)})]
+                    progress = ((i + 1) / total_paras) * 100
+                    yield [Document(text=batch_text, metadata={"filename": os.path.basename(file_path)})], progress
                     batch_text = ""
                     current_size = 0
 
             # Yield nốt phần còn dư
             if batch_text:
-                yield [Document(text=batch_text, metadata={"filename": os.path.basename(file_path)})]
+                yield [Document(text=batch_text, metadata={"filename": os.path.basename(file_path)})], 100
         else:
             yield []

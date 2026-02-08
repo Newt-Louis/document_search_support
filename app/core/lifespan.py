@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 import qdrant_client
+from qdrant_client import AsyncQdrantClient
 from llama_index.core import VectorStoreIndex, Settings
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from llama_index.embeddings.fastembed import FastEmbedEmbedding
@@ -28,11 +29,13 @@ async def lifespan(app):
 
     # Qdrant client + vector store
     client = qdrant_client.QdrantClient(url=cfg.QDRANT_URL)
-    vector_store = QdrantVectorStore(client=client, collection_name=cfg.COLLECTION_NAME)
+    aclient = qdrant_client.AsyncQdrantClient(url=cfg.QDRANT_URL)
+    vector_store = QdrantVectorStore(client=client, aclient=aclient, collection_name=cfg.COLLECTION_NAME)
 
     # Try build query_engine (nếu DB có dữ liệu)
     app.state.cfg = cfg
     app.state.qdrant_client = client
+    app.state.qdrant_aclient = aclient
     app.state.vector_store = vector_store
     app.state.query_engine = None
 
@@ -46,3 +49,8 @@ async def lifespan(app):
     yield
 
     print(">>> 🛑 Server shutting down...")
+    try:
+        await aclient.close()  # Đóng kết nối async
+        client.close()
+    except:
+        pass
