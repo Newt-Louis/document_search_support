@@ -1,31 +1,52 @@
 import logging,sys,os, shutil
-from typing import List
+import magic
+from pathlib import Path
 from fastapi import UploadFile, HTTPException
-from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, StorageContext, Settings
-from llama_index.vector_stores.qdrant import QdrantVectorStore
-from llama_index.embeddings.fastembed import FastEmbedEmbedding
-from llama_index.llms.ollama import Ollama
-import qdrant_client
+from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, StorageContext
+from app.core.config import get_config
 
-logging.basicConfig(stream=sys.stdout, level=logging.INFO)
-logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
-CACHE_DIR = os.getenv("CACHE_DIR", "../../data/cache")
-ALLOWED_EXTENSIONS = {".txt", ".csv", ".docx", ".pdf", ".xlsx"}
+cfg = get_config()
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(Path(cfg.LOG_DIR)/"ingest.log"),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+CACHE_DIR = cfg.CACHE_DIR
+ALLOWED_EXTENSIONS = {
+    "application/pdf": ".pdf",
+    "text/plain": ".txt",
+    "text/csv": ".csv",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/msword": ".doc",
+    "application/vnd.ms-excel": ".xls"
+}
 
 class IngestService:
     def __init__(self, vector_store, upload_dir: str):
         self.vector_store = vector_store
         self.upload_dir = upload_dir
 
-    @staticmethod
-    def _validate_file(filename: str):
-        ext = os.path.splitext(filename)[1].lower()
-        if ext not in ALLOWED_EXTENSIONS:
-            raise ValueError(f"Định dạng file '{ext}' không được hỗ trợ. Chỉ chấp nhận: {', '.join(ALLOWED_EXTENSIONS)}")
+    async def _validate_file(self,file:UploadFile):
+        header = await file.read(2048)
+        mime_type = magic.from_buffer(header, mime=True)
+        logger.info(f">>> Phát hiện file có MIME type: {mime_type}")
+        await file.seek(0)
+        if mime_type not in ALLOWED_EXTENSIONS:
+            if not (mime_type.startswith("text/") and file.filename.endswith((".txt", ".csv"))):
+                logger.warning(f"File bị reject: {file.filename} (MIME: {mime_type})")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File giả mạo hoặc không hỗ trợ! Phát hiện định dạng thực tế: {mime_type}"
+                )
 
     async def process_upload(self, file: UploadFile) -> str:
         try:
-            self._validate_file(file.filename)
+            await self._validate_file(file)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -35,9 +56,11 @@ class IngestService:
         try:
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
+            logger.info(f"File đã lưu: {file_path}")
             return self.index_file(file_path)
 
         except Exception as e:
+            logger.exception(f"Lỗi khi xử lý file {file.filename}")
             if os.path.exists(file_path):
                 os.remove(file_path)
             raise e
@@ -53,4 +76,6 @@ class IngestService:
             )
             return f"Lập chỉ mục cho tài liệu thành công tại: {os.path.basename(file_path)}"
         except Exception as e:
-                    raise HTTPException(status_code=500, detail=f"Lỗi khi Indexing: {str(e)}")
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            raise HTTPException(status_code=500, detail=f"Lỗi khi Indexing: {str(e)}")

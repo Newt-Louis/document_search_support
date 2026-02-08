@@ -7,7 +7,6 @@ router = APIRouter(tags=["ingest"])
 logger = logging.getLogger(__name__)
 
 def get_ingest_service(request: Request) -> IngestService:
-    """Dependency Injection để lấy Service"""
     cfg = request.app.state.cfg
     vector_store = request.app.state.vector_store
     return IngestService(vector_store=vector_store, upload_dir=cfg.UPLOAD_DIR)

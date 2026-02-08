@@ -7,7 +7,7 @@ from app.api.v1.routes_ingest import router as ingest_router
 def create_app() -> FastAPI:
     app = FastAPI(
         lifespan=lifespan,
-        title="Syezain AI Agent",
+        title="Syezain AI Agent Simple",
         version="1.0.0",
     )
 
