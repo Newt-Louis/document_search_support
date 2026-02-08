@@ -1,6 +1,5 @@
-import os, logging, shutil
+import logging
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Depends
-from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, StorageContext
 from app.services.rag.ingest import IngestService
 
 router = APIRouter(tags=["ingest"])
@@ -13,11 +12,25 @@ def get_ingest_service(request: Request) -> IngestService:
 
 @router.post("/upload")
 async def upload_document(request: Request = None, service: IngestService = Depends(get_ingest_service), file: UploadFile = File(...)):
-    message = await service.process_upload(file)
+    """
+    API Upload tài liệu.
+    Mọi logic validate file, check mime type, indexing đều nằm trong Service.
+    """
     if request:
         pass
-    return {
-        "status": "success",
-        "filename": file.filename,
-        "message": "Đã học xong tài liệu mới!"
-    }
+    try:
+        success_message = await service.process_upload(file)
+
+        return {
+            "status": "success",
+            "filename": file.filename,
+            "message": success_message
+        }
+
+    except HTTPException as e:
+        # Re-raise để FastAPI trả đúng mã lỗi (400, 500) mà Service đã định nghĩa
+        raise e
+    except Exception as e:
+        # Bắt các lỗi không xác định khác (nếu có sót)
+        logger.error(f"Unhandled Error in Upload Route: {e}")
+        raise HTTPException(status_code=500, detail="Lỗi không xác định từ máy chủ.")

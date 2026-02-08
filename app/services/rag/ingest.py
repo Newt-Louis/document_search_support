@@ -1,4 +1,6 @@
 import logging,sys,os, shutil
+from typing import Any, Coroutine
+
 import magic
 from pathlib import Path
 from fastapi import UploadFile, HTTPException
@@ -57,7 +59,10 @@ class IngestService:
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
             logger.info(f"File đã lưu: {file_path}")
-            return self.index_file(file_path)
+
+            if self.index_file(file_path):
+                return f"Lập chỉ mục cho tài liệu {file.filename} thành công!"
+            return "Có lỗi khác exception không bắt được !!!"
 
         except Exception as e:
             logger.exception(f"Lỗi khi xử lý file {file.filename}")
@@ -65,7 +70,7 @@ class IngestService:
                 os.remove(file_path)
             raise e
 
-    def index_file(self, file_path: str)->str:
+    def index_file(self, file_path: str)->bool:
         try:
             documents = SimpleDirectoryReader(input_files=[file_path]).load_data()
             storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
@@ -74,8 +79,9 @@ class IngestService:
                 storage_context=storage_context,
                 show_progress=True
             )
-            return f"Lập chỉ mục cho tài liệu thành công tại: {os.path.basename(file_path)}"
+            return True
         except Exception as e:
+            logger.exception(f"Lỗi khi lập chỉ mục: {e}")
             if os.path.exists(file_path):
                 os.remove(file_path)
             raise HTTPException(status_code=500, detail=f"Lỗi khi Indexing: {str(e)}")
