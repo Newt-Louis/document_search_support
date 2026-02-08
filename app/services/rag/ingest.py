@@ -1,4 +1,6 @@
-import logging,sys,os
+import logging,sys,os, shutil
+from typing import List
+from fastapi import UploadFile, HTTPException
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, StorageContext, Settings
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from llama_index.embeddings.fastembed import FastEmbedEmbedding
@@ -8,54 +10,47 @@ import qdrant_client
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
 CACHE_DIR = os.getenv("CACHE_DIR", "../../data/cache")
+ALLOWED_EXTENSIONS = {".txt", ".csv", ".docx", ".pdf", ".xlsx"}
 
-# 2. Setup Global Settings (Cấu hình toàn cục)
-# KHÔNG dùng OpenAI, chỉ dùng đồ nhà trồng được (Local)
-print(">>> Đang cấu hình kết nối tới Ollama...")
+class IngestService:
+    def __init__(self, vector_store, upload_dir: str):
+        self.vector_store = vector_store
+        self.upload_dir = upload_dir
 
-# Model nhúng (Embedding) - Chịu trách nhiệm biến chữ thành số
-Settings.embed_model = FastEmbedEmbedding(
-    model_name="intfloat/multilingual-e5-large",
-    cache_dir=CACHE_DIR+"multilingual-e5-large",
-)
+    @staticmethod
+    def _validate_file(filename: str):
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in ALLOWED_EXTENSIONS:
+            raise ValueError(f"Định dạng file '{ext}' không được hỗ trợ. Chỉ chấp nhận: {', '.join(ALLOWED_EXTENSIONS)}")
 
-# Model ngôn ngữ (LLM) - Dùng để tóm tắt hoặc xử lý metadata nếu cần
-Settings.llm = Ollama(
-    model="llama3.2",
-    request_timeout=360.0
-)
+    async def process_upload(self, file: UploadFile) -> str:
+        try:
+            self._validate_file(file.filename)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
-# 3. Kết nối tới Qdrant (Vector DB)
-print(">>> Đang kết nối tới Qdrant Database...")
-client = qdrant_client.QdrantClient(
-    # Docker của ta đang chạy ở port 6333
-    url="http://localhost:6333"
-)
+        os.makedirs(self.upload_dir, exist_ok=True)
+        file_path = os.path.join(self.upload_dir, file.filename)
 
-# Tạo một "Collection" (giống như Table trong SQL) tên là "company_docs"
-vector_store = QdrantVectorStore(client=client, collection_name="company_docs")
-storage_context = StorageContext.from_defaults(vector_store=vector_store)
+        try:
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            return self.index_file(file_path)
 
+        except Exception as e:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            raise e
 
-# 4. Đọc dữ liệu và Indexing (Phần nặng nhất)
-def ingest_data():
-    print(">>> Đang đọc file từ thư mục 'data/'. Quá trình này có thể mất vài giây...")
-
-    # Đọc tất cả file trong folder data
-    documents = SimpleDirectoryReader("./data").load_data()
-
-    # MAGIC HAPPENS HERE:
-    # 1. Cắt nhỏ văn bản (Chunking)
-    # 2. Gọi bge-m3 để biến thành Vector
-    # 3. Đẩy Vector vào Qdrant
-    index = VectorStoreIndex.from_documents(
-        documents,
-        storage_context=storage_context,
-    )
-
-    print(">>> ✅ Xong! Dữ liệu đã được nạp vào Qdrant.")
-    return index
-
-
-if __name__ == "__main__":
-    ingest_data()
+    def index_file(self, file_path: str)->str:
+        try:
+            documents = SimpleDirectoryReader(input_files=[file_path]).load_data()
+            storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
+            VectorStoreIndex.from_documents(
+                documents,
+                storage_context=storage_context,
+                show_progress=True
+            )
+            return f"Lập chỉ mục cho tài liệu thành công tại: {os.path.basename(file_path)}"
+        except Exception as e:
+                    raise HTTPException(status_code=500, detail=f"Lỗi khi Indexing: {str(e)}")
