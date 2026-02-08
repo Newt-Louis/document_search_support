@@ -1,5 +1,5 @@
-import logging, sys, os, shutil, magic, csv, openpyxl
-from typing import Generator, List
+import logging, sys, os, shutil, magic, csv, openpyxl, json
+from typing import Generator, List, AsyncGenerator
 from pathlib import Path
 from fastapi import UploadFile, HTTPException
 
@@ -50,10 +50,12 @@ class IngestService:
                     detail=f"File giả mạo hoặc không hỗ trợ! Phát hiện định dạng thực tế: {mime_type}"
                 )
 
-    async def process_upload(self, file: UploadFile) -> str:
+    async def process_upload(self, file: UploadFile) -> AsyncGenerator[str, None]:
         try:
             await self._validate_file(file)
+            yield json.dumps({"status": "validating", "progress": 5, "message": "Kiểm tra định dạng file xong."}) + "\n"
         except ValueError as e:
+            yield json.dumps({"status": "error", "message": str(e)}) + "\n"
             raise HTTPException(status_code=400, detail=str(e))
 
         os.makedirs(self.upload_dir, exist_ok=True)
@@ -62,54 +64,60 @@ class IngestService:
         try:
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
-            logger.info(f"File đã lưu: {file_path}")
 
-            success = await self.index_file(file_path)
-            if success:
-                return f"Lập chỉ mục cho tài liệu {file.filename} thành công!"
-            return "Có lỗi khác exception không bắt được !!!"
+            yield json.dumps({"status": "saving", "progress": 10, "message": "Đã lưu file lên server. Bắt đầu xử lý..."}) + "\n"
+            async for progress_update in self.index_file(file_path):
+                yield progress_update
+            # success = await self.index_file(file_path)
+            # if success:
+            #     return f"Lập chỉ mục cho tài liệu {file.filename} thành công!"
+            # return "Có lỗi khác exception không bắt được !!!"
 
         except Exception as e:
             logger.exception(f"Lỗi khi xử lý file {file.filename}")
             if os.path.exists(file_path):
                 os.remove(file_path)
-            raise e
+            yield json.dumps({"status": "error", "message": f"Lỗi hệ thống: {str(e)}"}) + "\n"
 
-    async def index_file(self, file_path: str)->bool:
+    async def index_file(self, file_path: str)->AsyncGenerator[str, None]:
+        """
+        Hàm index_file Generator xử lý index file lưu vào qdrant theo từng batch chạy theo tiến trình.
+        """
         try:
-            # documents = SimpleDirectoryReader(input_files=[file_path]).load_data()
-            # storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
             pipeline = IngestionPipeline(
                 transformations=[
-                    self.text_splitter,  # 1. Cắt nhỏ (Chunking)
-                    Settings.embed_model,  # 2. Hóa vector (Embedding)
+                    self.text_splitter,  # Cắt nhỏ (Chunking)
+                    Settings.embed_model,  # Hóa vector (Embedding)
                 ],
-                vector_store=self.vector_store,  # 3. Đẩy vào Qdrant
+                vector_store=self.vector_store,  # Đẩy vào Qdrant
             )
-            total_chunks = 0
-            for doc_batch in self._lazy_load_file(file_path, chunk_size_mb=40):
+            total_size = os.path.getsize(file_path)
+            processed_size = 0
+            yield json.dumps({"status": "processing", "progress": 15, "message": "Đang khởi tạo Pipeline..."}) + "\n"
+            for doc_batch in self._lazy_load_file(file_path,chunk_size_mb=5):
                 if not doc_batch:
                     continue
-
-                # Chạy pipline cho 1 batch nhỏ
-                # Dữ liệu vào -> Cắt -> Embed -> Lưu Qdrant -> Xóa khỏi RAM
+                batch_size = sum([len(d.text.encode('utf-8')) for d in doc_batch])
+                processed_size += batch_size
                 nodes = await pipeline.arun(documents=doc_batch, show_progress=False)
-                total_chunks += len(nodes)
-                logger.info(f">>> Đã đẩy xong {len(nodes)} chunks vào DB...")
+                percent = 15 + int((processed_size / total_size) * 80)
+                if percent > 95: percent = 95
+                message = json.dumps({
+                    "status": "processing",
+                    "progress": percent,
+                    "message": f"Đã vector hóa {len(nodes)} đoạn văn bản..."
+                }) + "\n"
+                yield message
 
-                # Force Python dọn rác ngay lập tức (Optional nhưng tốt cho 20GB)
                 del doc_batch
                 del nodes
-            # VectorStoreIndex.from_documents(
-            #     documents,
-            #     storage_context=storage_context,
-            #     show_progress=True
-            # )
-            return True
+
+            yield json.dumps({"status": "complete", "progress": 100, "message": "✅ Hoàn tất! Tài liệu đã sẵn sàng."}) + "\n"
         except Exception as e:
             logger.exception(f"Lỗi khi lập chỉ mục: {e}")
             if os.path.exists(file_path):
                 os.remove(file_path)
+            yield json.dumps({"status": "error", "message": f"Lỗi xử lý AI: {str(e)}"}) + "\n"
             raise HTTPException(status_code=500, detail=f"Lỗi khi Indexing: {str(e)}")
 
     def _lazy_load_file(self, file_path: str, chunk_size_mb: int = 10) -> Generator[List[Document], None, None]:

@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Syezain AI Upload Widget</title>
+    <style>
+        /* CSS nội tuyến để nhúng vào đâu cũng chạy */
+        :root { --primary-color: #2563eb; --success-color: #16a34a; --bg-color: #f8fafc; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: transparent; padding: 20px; margin: 0; }
+        .upload-card { background: white; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); padding: 24px; max-width: 500px; margin: 0 auto; border: 1px solid #e2e8f0; }
+        .title { font-size: 1.25rem; font-weight: 600; color: #1e293b; margin-bottom: 1rem; text-align: center; }
+        .drop-zone { border: 2px dashed #cbd5e1; border-radius: 8px; padding: 2rem; text-align: center; cursor: pointer; transition: all 0.3s; }
+        .drop-zone:hover { border-color: var(--primary-color); background: #eff6ff; }
+        .drop-zone.dragover { border-color: var(--primary-color); background: #dbeafe; }
+
+        /* Progress Bar Styles */
+        .progress-container { margin-top: 1.5rem; display: none; }
+        .progress-label { display: flex; justify-content: space-between; font-size: 0.875rem; color: #475569; margin-bottom: 0.5rem; }
+        .progress-bar-bg { background: #e2e8f0; border-radius: 9999px; height: 8px; overflow: hidden; }
+        .progress-bar-fill { height: 100%; border-radius: 9999px; transition: width 0.3s ease; }
+
+        #upload-fill { background: var(--primary-color); width: 0%; }
+        #process-fill { background: var(--success-color); width: 0%; }
+
+        .status-text { margin-top: 0.5rem; font-size: 0.875rem; color: #64748b; text-align: center; min-height: 20px; }
+        .btn-upload { background: var(--primary-color); color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: 600; margin-top: 1rem; width: 100%; }
+        .btn-upload:disabled { background: #94a3b8; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+
+<div class="upload-card">
+    <div class="title">📂 Nạp Kiến Thức Cho AI</div>
+
+    <div class="drop-zone" id="dropZone">
+        <p>Kéo thả file vào đây hoặc click để chọn</p>
+        <span style="font-size: 0.8rem; color: #94a3b8">(Hỗ trợ: PDF, DOCX, CSV, TXT, XLSX)</span>
+        <input type="file" id="fileInput" style="display: none" accept=".pdf,.docx,.csv,.txt,.xlsx">
+    </div>
+    <div id="fileInfo" style="margin-top: 10px; text-align: center; font-weight: bold; color: #334155;"></div>
+
+    <button id="btnSubmit" class="btn-upload" disabled>Bắt đầu Upload</button>
+
+    <div class="progress-container" id="uploadProgressBox">
+        <div class="progress-label"><span>📤 Đang tải lên Server...</span><span id="uploadPercent">0%</span></div>
+        <div class="progress-bar-bg"><div class="progress-bar-fill" id="upload-fill"></div></div>
+    </div>
+
+    <div class="progress-container" id="processProgressBox">
+        <div class="progress-label"><span>🧠 AI đang đọc hiểu & lưu trữ...</span><span id="processPercent">0%</span></div>
+        <div class="progress-bar-bg"><div class="progress-bar-fill" id="process-fill"></div></div>
+        <div class="status-text" id="statusMessage">Đang chờ...</div>
+    </div>
+</div>
+
+<script>
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const btnSubmit = document.getElementById('btnSubmit');
+    const fileInfo = document.getElementById('fileInfo');
+
+    // UI Elements
+    const uploadBox = document.getElementById('uploadProgressBox');
+    const processBox = document.getElementById('processProgressBox');
+    const uploadFill = document.getElementById('upload-fill');
+    const processFill = document.getElementById('process-fill');
+    const uploadPercent = document.getElementById('uploadPercent');
+    const processPercent = document.getElementById('processPercent');
+    const statusMessage = document.getElementById('statusMessage');
+
+    // Drag & Drop Logic
+    dropZone.onclick = () => fileInput.click();
+    fileInput.onchange = () => {
+        if(fileInput.files.length > 0) {
+            fileInfo.innerText = "📄 " + fileInput.files[0].name;
+            btnSubmit.disabled = false;
+        }
+    };
+    // ... (Thêm logic dragover/dragleave nếu muốn đẹp hơn) ...
+
+    btnSubmit.onclick = async () => {
+        const file = fileInput.files[0];
+        if (!file) return;
+
+        // Reset UI
+        btnSubmit.disabled = true;
+        uploadBox.style.display = 'block';
+        processBox.style.display = 'block';
+        uploadFill.style.width = '0%';
+        processFill.style.width = '0%';
+        statusMessage.innerText = "Đang khởi tạo...";
+
+        // 1. TẠO REQUEST UPLOAD (Dùng XMLHttpRequest để bắt sự kiện upload progress)
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/upload', true); // Endpoint POST xử lý file
+
+        // THANH TIẾN TRÌNH 1: UPLOAD
+        xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+                const percent = Math.round((event.loaded / event.total) * 100);
+                uploadFill.style.width = percent + '%';
+                uploadPercent.innerText = percent + '%';
+                if (percent === 100) {
+                    statusMessage.innerText = "Upload xong. Server đang xử lý...";
+                }
+            }
+        };
+
+        // XỬ LÝ RESPONSE STREAMING (THANH TIẾN TRÌNH 2)
+        // Khi Server bắt đầu trả về data (chunked response)
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === 3 || xhr.readyState === 4) {
+                // xhr.responseText sẽ chứa dữ liệu tích lũy.
+                // Ta cần xử lý để lấy dòng mới nhất.
+                const lines = xhr.responseText.split("\n");
+
+                // Lấy dòng JSON cuối cùng không rỗng
+                let lastJson = null;
+                for (let i = lines.length - 1; i >= 0; i--) {
+                    if (lines[i].trim().startsWith("{")) {
+                        try {
+                            lastJson = JSON.parse(lines[i]);
+                            break;
+                        } catch(e) {}
+                    }
+                }
+
+                if (lastJson) {
+                    // Cập nhật Thanh 2
+                    if (lastJson.progress) {
+                        processFill.style.width = lastJson.progress + '%';
+                        processPercent.innerText = lastJson.progress + '%';
+                    }
+                    if (lastJson.message) {
+                        statusMessage.innerText = lastJson.message;
+                    }
+
+                    if (lastJson.status === 'complete') {
+                        statusMessage.style.color = 'green';
+                        statusMessage.innerText = "✅ Xong! File đã vào hệ thống.";
+                        btnSubmit.disabled = false;
+                        btnSubmit.innerText = "Upload file khác";
+                        fileInput.value = '';
+                    }
+                    if (lastJson.status === 'error') {
+                        statusMessage.style.color = 'red';
+                        alert("Lỗi: " + lastJson.message);
+                        btnSubmit.disabled = false;
+                    }
+                }
+            }
+        };
+
+        xhr.send(formData);
+    };
+</script>
+
+</body>
+</html>
