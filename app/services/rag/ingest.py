@@ -1,4 +1,4 @@
-import logging, sys, os, shutil, magic, csv
+import logging, sys, os, shutil, magic, csv, openpyxl
 from typing import Generator, List
 from pathlib import Path
 from fastapi import UploadFile, HTTPException
@@ -168,7 +168,60 @@ class IngestService:
                     yield [Document(text=text, metadata={"page_label": reader.get_page_number(page),
                                                          "filename": os.path.basename(file_path)})]
 
-        # TODO: Logic cho Docx (tương tự, dùng docx2txt)
+        elif ext == ".xlsx":
+            # Quan trọng: read_only=True giúp openpyxl không load hết vào RAM
+            # data_only=True để lấy giá trị cuối cùng, không lấy công thức hàm
+            wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+
+            for sheet in wb:
+                batch_text = ""
+                current_size = 0
+                # Duyệt từng dòng trong sheet. Đây là Generator.
+                for row in sheet.iter_rows(values_only=True):
+                    # Lọc None và chuyển thành string, cách nhau bởi dấu phẩy
+                    row_values = [str(cell) if cell is not None else "" for cell in row]
+                    row_text = ", ".join(row_values) + "\n"
+
+                    batch_text += row_text
+                    current_size += len(row_text.encode('utf-8'))
+
+                    # Kiểm tra ngưỡng chunk_size_mb
+                    if current_size >= chunk_size_mb * 1024 * 1024:
+                        yield [Document(text=batch_text,
+                                        metadata={"filename": os.path.basename(file_path), "sheet": sheet.title})]
+                        batch_text = ""  # Giải phóng RAM
+                        current_size = 0
+
+                # Yield phần còn dư của sheet hiện tại
+                if batch_text:
+                    yield [Document(text=batch_text,
+                                    metadata={"filename": os.path.basename(file_path), "sheet": sheet.title})]
+            wb.close()
+
+        elif ext == ".docx":
+            from docx import Document as DocxDocument
+            # Word file là tập hợp các đoạn văn (Paragraphs)
+            doc = DocxDocument(file_path)
+            batch_text = ""
+            current_size = 0
+
+            for para in doc.paragraphs:
+                text = para.text
+                if not text.strip():
+                    continue  # Bỏ qua đoạn trống
+
+                text += "\n"
+                batch_text += text
+                current_size += len(text.encode('utf-8'))
+
+                # Kiểm tra ngưỡng chunk_size_mb
+                if current_size >= chunk_size_mb * 1024 * 1024:
+                    yield [Document(text=batch_text, metadata={"filename": os.path.basename(file_path)})]
+                    batch_text = ""
+                    current_size = 0
+
+            # Yield nốt phần còn dư
+            if batch_text:
+                yield [Document(text=batch_text, metadata={"filename": os.path.basename(file_path)})]
         else:
-            # Fallback cho file nhỏ hoặc định dạng khác (dùng cách cũ nếu cần, nhưng cẩn thận)
             yield []
