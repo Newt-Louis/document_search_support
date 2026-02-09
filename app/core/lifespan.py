@@ -5,7 +5,9 @@ from llama_index.core import VectorStoreIndex, Settings
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from llama_index.embeddings.fastembed import FastEmbedEmbedding
 from llama_index.llms.ollama import Ollama
+
 from app.core.config import get_config
+from app.services.rag.engine import get_query_engine, KnowledgeBaseEmptyError
 
 @asynccontextmanager
 async def lifespan(app):
@@ -37,11 +39,15 @@ async def lifespan(app):
     app.state.qdrant_client = client
     app.state.qdrant_aclient = aclient
     app.state.vector_store = vector_store
-    app.state.query_engine = None
+
+    # Cache / state cho RAG
+    app.state.index = None
+    app.state.query_engine_json = None
+    app.state.query_engine_stream = None
 
     try:
-        index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
-        app.state.query_engine = index.as_query_engine(streaming=True, similarity_top_k=2)
+        _ = get_query_engine(app, streaming=False, top_k=3)
+        _ = get_query_engine(app, streaming=True, top_k=3)
         print(">>> ✅ AI Engine Ready!")
     except Exception as e:
         print(f">>> ⚠️ DB empty / cannot init index yet: {e}")
