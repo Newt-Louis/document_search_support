@@ -1,11 +1,11 @@
+import qdrant_client, json
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from llama_index.core import VectorStoreIndex
 from llama_index.vector_stores.qdrant import QdrantVectorStore
-import qdrant_client, json
 from llama_index.core.prompts import PromptTemplate
-from typing import Any, Dict, List, Optional
+from pydantic import BaseModel
 
 router = APIRouter(tags=["chat"])
 
@@ -23,6 +23,10 @@ class ChatResponse(BaseModel):
     meta: Dict[str, Any] = {}
 
 def sse_event(event: str, data: Dict[str, Any]) -> str:
+    """
+    SSE format: event: <name>\n data: <json>\n\n
+    (Server-Sent Events)
+    """
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
@@ -74,7 +78,7 @@ def get_query_engine(request: Request, *, streaming: bool, top_k: int = 3):
     """
     cfg = request.app.state.cfg
 
-    # cache theo mode để khỏi “đạp” lẫn nhau giữa json và stream
+    # cache theo mode để không bị đè lẫn nhau giữa json và stream
     cache_key = "query_engine_stream" if streaming else "query_engine_json"
     qe = getattr(request.app.state, cache_key, None)
     if qe is not None:
@@ -97,35 +101,37 @@ def get_query_engine(request: Request, *, streaming: bool, top_k: int = 3):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Hệ thống chưa có dữ liệu hoặc không thể load index: {e}")
 
-@router.post("/chat")
+@router.post("/chat",response_model=ChatResponse)
 async def chat_endpoint(request: Request, payload: ChatRequest):
     """
-    Stream token dạng text/plain (giữ nguyên như hiện tại).
-    Nếu muốn SSE chuẩn event-stream thì ta đổi sau.
+    Trả JSON sau khi chạy xong.
     """
-    cfg = request.app.state.cfg
-    query_engine = request.app.state.query_engine
+    qe = get_query_engine(request, streaming=False, top_k=3)
 
-    if query_engine is None:
-        # reload attempt nếu lúc boot chưa có data
-        try:
-            client = qdrant_client.QdrantClient(url=cfg.QDRANT_URL)
-            vector_store = QdrantVectorStore(client=client, collection_name=cfg.COLLECTION_NAME)
-            index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
-            query_engine = index.as_query_engine(streaming=True, similarity_top_k=2)
-            request.app.state.query_engine = query_engine
-        except Exception:
-            raise HTTPException(status_code=500, detail="Hệ thống chưa có dữ liệu. Vui lòng upload tài liệu trước.")
+    resp = qe.query(payload.question)
 
-    def token_stream():
-        resp = query_engine.query(payload.question)
-        for token in resp.response_gen:
-            yield token
+    answer = str(resp)  # LlamaIndex response -> string
+    sources = _extract_sources(resp)
 
-    return StreamingResponse(token_stream(), media_type="text/plain")
+    return {
+        "answer": answer,
+        "sources": sources,
+        "meta": {
+            "top_k": 3,
+            "streaming": False,
+        },
+    }
 
 @router.post("/chat/stream")
-async def chat_stream(request: Request, payload: ChatRequest):
+async def chat_sse(request: Request, payload: ChatRequest):
+    """
+    SSE streaming token. Client đọc event-stream và append token.
+    Trả event:
+        - start
+        - token (delta)
+        - done (answer + sources)
+        - error
+    """
     cfg = request.app.state.cfg
     query_engine = request.app.state.query_engine
 
@@ -141,33 +147,25 @@ async def chat_stream(request: Request, payload: ChatRequest):
             raise HTTPException(status_code=500, detail="Hệ thống chưa có dữ liệu. Vui lòng upload tài liệu trước.")
 
     def generator():
-        # optional: báo start
         yield sse_event("start", {"ok": True})
 
         try:
-            resp = query_engine.query(payload.question)
+            resp = qe.query(payload.question)
 
-            full = []
+            full_parts: List[str] = []
             for token in resp.response_gen:
-                full.append(token)
+                full_parts.append(token)
                 yield sse_event("token", {"delta": token})
 
-            # optional: sources (nếu LlamaIndex trả được metadata)
-            sources = []
-            try:
-                # tùy version llamaindex, resp.source_nodes có thể tồn tại
-                for sn in getattr(resp, "source_nodes", [])[:5]:
-                    node = sn.node
-                    sources.append({
-                        "score": getattr(sn, "score", None),
-                        "text": getattr(node, "text", "")[:500],
-                        "metadata": getattr(node, "metadata", {}),
-                    })
-            except Exception:
-                pass
-
-            yield sse_event("done", {"answer": "".join(full), "sources": sources})
-
+            sources = _extract_sources(resp)
+            yield sse_event(
+                "done",
+                {
+                    "answer": "".join(full_parts),
+                    "sources": sources,
+                    "meta": {"top_k": 3, "streaming": True},
+                },
+            )
         except Exception as e:
             yield sse_event("error", {"message": str(e)})
 
