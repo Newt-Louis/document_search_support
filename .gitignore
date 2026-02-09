@@ -209,3 +209,4 @@ __marimo__/
 qdrant_storage/
 docker*
 Docker*
+*.tar
