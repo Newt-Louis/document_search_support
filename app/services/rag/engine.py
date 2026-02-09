@@ -1,13 +1,16 @@
 # app/services/rag/engine.py
 import json
+import logging
 from typing import Any, Dict, List, Optional
 
 from llama_index.core import VectorStoreIndex
 from app.services.rag.prompts import QA_TEMPLATE
 
+logger = logging.getLogger(__name__)
 
 class KnowledgeBaseEmptyError(RuntimeError):
     """Ném ra khi Qdrant chưa có dữ liệu / chưa load được index."""
+    pass
 
 def sse_event(event: str, data: Dict[str, Any]) -> str:
     """
@@ -22,10 +25,11 @@ def _extract_sources(resp, max_sources: int = 5) -> List[Dict[str, Any]]:
     Mình lấy ra text+metadata để trả JSON cho client.
     """
     sources: List[Dict[str, Any]] = []
-    for sn in getattr(resp, "source_nodes", [])[:max_sources]:
+    source_nodes = getattr(resp, "source_nodes", [])
+    if not source_nodes: return []
+    for sn in source_nodes[:max_sources]:
         node = getattr(sn, "node", None)
-        if node is None:
-            continue
+        if node is None: continue
         sources.append(
             {
                 "score": getattr(sn, "score", None),
@@ -74,6 +78,7 @@ def get_query_engine(app, *, streaming: bool, top_k: int = 3):
         streaming=streaming,
         similarity_top_k=top_k,
         text_qa_template=QA_TEMPLATE,
+        vector_store_kwargs={"aclient": app.state.qdrant_aclient}
     )
     setattr(app.state, cache_key, qe)
     return qe
@@ -90,9 +95,9 @@ def set_index(app, index: VectorStoreIndex):
     app.state.index = index
     invalidate_engines(app)
 
-def query_json(app, question: str, *, top_k: int = 3) -> Dict[str, Any]:
+async def query_json(app, question: str, *, top_k: int = 3) -> Dict[str, Any]:
     qe = get_query_engine(app, streaming=False, top_k=top_k)
-    resp = qe.query(question)
+    resp = await qe.query(question)
 
     return {
         "answer": str(resp),
@@ -101,32 +106,28 @@ def query_json(app, question: str, *, top_k: int = 3) -> Dict[str, Any]:
     }
 
 
-def query_sse_generator(app, question: str, *, top_k: int = 3):
+async def query_sse_generator(app, question: str, *, top_k: int = 3):
     """
     Generator SSE: start -> token* -> done|error
     """
     qe = get_query_engine(app, streaming=True, top_k=top_k)
 
-    # “đóng băng” qe để tránh lỗi scope khi generator chạy
-    def gen(qe=qe):
-        yield sse_event("start", {"ok": True})
-        try:
-            resp = qe.query(question)
+    yield sse_event("start", {"ok": True})
+    try:
+        resp = await qe.aquery(question)
+        full = []
+        async for token in resp.async_response_gen():
+            full.append(token)
+            yield sse_event("token", {"delta": token})
 
-            full = []
-            for token in resp.response_gen:
-                full.append(token)
-                yield sse_event("token", {"delta": token})
-
-            yield sse_event(
-                "done",
-                {
-                    "answer": "".join(full),
-                    "sources": _extract_sources(resp),
-                    "meta": {"top_k": top_k, "streaming": True},
-                },
-            )
-        except Exception as e:
-            yield sse_event("error", {"message": str(e)})
-
-    return gen()
+        yield sse_event(
+            "done",
+            {
+                "answer": "".join(full),
+                "sources": _extract_sources(resp),
+                "meta": {"top_k": top_k, "streaming": True},
+            },
+        )
+    except Exception as e:
+        logger.exception(f"Chat Error: {e}")
+        yield sse_event("error", {"message": str(e)})

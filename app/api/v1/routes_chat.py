@@ -28,7 +28,7 @@ async def chat_json_endpoint(request: Request, payload: ChatRequest):
     Trả JSON sau khi chạy xong.
     """
     try:
-        return query_json(request.app, payload.question, top_k=3)
+        return await query_json(request.app, payload.question, top_k=3)
     except KnowledgeBaseEmptyError:
         raise HTTPException(status_code=500, detail="Knowledge base đang rỗng. Hãy ingest tài liệu trước.")
     except Exception as e:
