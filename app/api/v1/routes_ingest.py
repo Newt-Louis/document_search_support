@@ -16,8 +16,8 @@ def get_ingest_service(request: Request) -> IngestService:
 @router.get("/upload")
 async def get_upload_ui(request: Request):
     """
-        Trả về giao diện HTML nhúng vào iframe.
-        """
+    Trả về giao diện HTML nhúng vào iframe.
+    """
     return templates.TemplateResponse("index.html", {"request": request})
 @router.post("/upload")
 async def upload_document(request: Request = None, service: IngestService = Depends(get_ingest_service), file: UploadFile = File(...)):

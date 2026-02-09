@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Syezain AI Chat Widget</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='chat_widget/chat_widget.css') }}" />
+</head>
+
+<body>
+  <div class="cw-shell">
+    <header class="cw-header">
+      <div class="cw-title">
+        <div class="cw-dot" aria-hidden="true"></div>
+        <div>
+          <div class="cw-name">Syezain AI Agent</div>
+          <div class="cw-sub">RAG • Ollama + Qdrant • Streaming</div>
+        </div>
+      </div>
+
+      <div class="cw-actions">
+        <button class="cw-btn" id="cw-clear" type="button" title="Xoá lịch sử chat">Clear</button>
+      </div>
+    </header>
+
+    <main class="cw-main" id="cw-main">
+      <div class="cw-hint">
+        <div class="cw-hint-title">Gợi ý</div>
+        <div class="cw-hint-text">
+          Nhập câu hỏi và nhấn <b>Enter</b> để gửi. Nhấn <b>Shift+Enter</b> để xuống dòng.
+          Widget sẽ gọi <code>/api/v1/chat/stream</code> để hiển thị chữ chạy.
+        </div>
+      </div>
+    </main>
+
+    <footer class="cw-footer">
+      <form class="cw-form" id="cw-form" autocomplete="off">
+        <textarea
+          id="cw-input"
+          class="cw-input"
+          rows="1"
+          placeholder="Nhập câu hỏi…"
+        ></textarea>
+
+        <button class="cw-send" id="cw-send" type="submit">
+          <span class="cw-send-text">Send</span>
+          <span class="cw-send-loader" id="cw-loader" aria-hidden="true"></span>
+        </button>
+      </form>
+
+      <div class="cw-meta">
+        <span>API:</span>
+        <code id="cw-api">/api/v1/chat/stream</code>
+        <span class="cw-sep">•</span>
+        <span id="cw-status" class="cw-status">Idle</span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="{{ url_for('static', path='chat_widget/chat_widget.js') }}"></script>
+</body>
+</html>

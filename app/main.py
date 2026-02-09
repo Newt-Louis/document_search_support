@@ -1,5 +1,6 @@
 # app/main.py
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from app.core.lifespan import lifespan
 from app.api.v1.routes_chat import router as chat_router
 from app.api.v1.routes_ingest import router as ingest_router
@@ -10,7 +11,7 @@ def create_app() -> FastAPI:
         title="Syezain AI Agent Simple",
         version="1.0.0",
     )
-
+    app.mount("/static", StaticFiles(directory="app/static"), name="static")
     @app.get("/")
     def health_check():
         return {"status": "running", "engine": "Ollama + Qdrant"}

@@ -2,12 +2,14 @@ import qdrant_client, json
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from fastapi.templating import Jinja2Templates
 from llama_index.core import VectorStoreIndex
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from llama_index.core.prompts import PromptTemplate
 from pydantic import BaseModel
 
 router = APIRouter(tags=["chat"])
+templates = Jinja2Templates(directory="app/static/chat_widget")
 
 class ChatRequest(BaseModel):
     question: str
@@ -100,6 +102,10 @@ def get_query_engine(request: Request, *, streaming: bool, top_k: int = 3):
         return qe
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Hệ thống chưa có dữ liệu hoặc không thể load index: {e}")
+
+@router.get("/chat")
+async def get_chat_ui(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
 @router.post("/chat",response_model=ChatResponse)
 async def chat_endpoint(request: Request, payload: ChatRequest):
