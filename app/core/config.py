@@ -24,12 +24,17 @@ class AppConfig:
     EMBED_MODEL: str = os.getenv("EMBED_MODEL", "intfloat/multilingual-e5-large")
     EMBED_CACHE_DIR: str = os.getenv("EMBED_CACHE_DIR", str(BASE_DIR/"data"/"cache"/"multilingual-e5-large"))
 
-    # LLM (Ollama)
+    # LLM (Ollama) - Config
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.2")
     OLLAMA_TIMEOUT: float = float(os.getenv("OLLAMA_TIMEOUT", "360"))
-    OLLAMA_TEMPERATURE: float = float(os.getenv("OLLAMA_TEMPERATURE", "0.1"))
     OLLAMA_NUM_CTX: int = int(os.getenv("OLLAMA_NUM_CTX", "4096"))
+
+    # LLM - Personality
+    OLLAMA_TEMPERATURE: float = float(os.getenv("OLLAMA_TEMPERATURE", "0.1"))
+    OLLAMA_TOP_P: float = float(os.getenv("OLLAMA_TOP_P", "0.15"))
+    OLLAMA_NUM_PREDICT: int = int(os.getenv("OLLAMA_NUM_PREDICT", "10"))
+    OLLAMA_REPEAT_PENALTY: float = float(os.getenv("OLLAMA_REPEAT_PENALTY", "0.1"))
 
     def __post_init__(self):
         """Tạo các thư mục nếu chưa tồn tại"""

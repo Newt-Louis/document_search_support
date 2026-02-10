@@ -97,7 +97,7 @@ def set_index(app, index: VectorStoreIndex):
 
 async def query_json(app, question: str, *, top_k: int = 3) -> Dict[str, Any]:
     qe = get_query_engine(app, streaming=False, top_k=top_k)
-    resp = await qe.query(question)
+    resp = await qe.aquery(question)
 
     return {
         "answer": str(resp),

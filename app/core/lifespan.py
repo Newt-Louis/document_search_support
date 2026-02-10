@@ -26,7 +26,12 @@ async def lifespan(app):
         base_url=cfg.OLLAMA_BASE_URL,
         request_timeout=cfg.OLLAMA_TIMEOUT,
         temperature=cfg.OLLAMA_TEMPERATURE,
-        additional_kwargs={"num_ctx": cfg.OLLAMA_NUM_CTX},
+        additional_kwargs={
+            "num_ctx": cfg.OLLAMA_NUM_CTX,
+            "top_p": cfg.OLLAMA_TOP_P,
+            "repeat_penalty": cfg.OLLAMA_REPEAT_PENALTY,
+            "num_predict": cfg.OLLAMA_NUM_PREDICT,
+        },
     )
 
     # Qdrant client + vector store
