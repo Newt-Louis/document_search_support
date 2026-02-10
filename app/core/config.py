@@ -21,8 +21,8 @@ class AppConfig:
     LOG_DIR: str = os.getenv("LOG_DIR", str(BASE_DIR/"data"/"logs"))
 
     # Embedding
-    EMBED_MODEL: str = os.getenv("EMBED_MODEL", "intfloat/multilingual-e5-large")
-    EMBED_CACHE_DIR: str = os.getenv("EMBED_CACHE_DIR", str(BASE_DIR/"data"/"cache"/"multilingual-e5-large"))
+    EMBED_MODEL: str = os.getenv("EMBED_MODEL", "intfloat/multilingual-e5-small")
+    EMBED_CACHE_DIR: str = os.getenv("EMBED_CACHE_DIR", str(BASE_DIR/"data"/"cache"/"multilingual-e5-small"))
 
     # LLM (Ollama) - Config
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")

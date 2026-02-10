@@ -3,21 +3,23 @@ import qdrant_client
 from qdrant_client import AsyncQdrantClient
 from llama_index.core import VectorStoreIndex, Settings
 from llama_index.vector_stores.qdrant import QdrantVectorStore
-from llama_index.embeddings.fastembed import FastEmbedEmbedding
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.llms.ollama import Ollama
 
 from app.core.config import get_config
-from app.services.rag.engine import get_query_engine, KnowledgeBaseEmptyError
+from app.services.rag.engine import get_query_engine
 
 @asynccontextmanager
 async def lifespan(app):
     cfg = get_config()
     print(">>> 🚀 Booting AI Server...")
 
-    # Embed model (FastEmbed ONNX CPU)
-    Settings.embed_model = FastEmbedEmbedding(
+    # Embed model (HuggingFaceEmbedding CPU)
+    Settings.embed_model = HuggingFaceEmbedding(
         model_name=cfg.EMBED_MODEL,
-        cache_dir=cfg.EMBED_CACHE_DIR,
+        cache_folder=cfg.EMBED_CACHE_DIR,
+        embed_batch_size=10,
+        device="cpu"
     )
 
     # LLM (Ollama)
