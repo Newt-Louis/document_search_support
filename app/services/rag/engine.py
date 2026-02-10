@@ -95,7 +95,6 @@ def set_index(app, index: VectorStoreIndex):
     app.state.index = index
     invalidate_engines(app)
 
-GREETING_KEYWORDS = ["hi", "hello", "xin chào", "chào", "alo", "hola"]
 async def query_json(app, question: str, *, top_k: int = 3) -> Dict[str, Any]:
     qe = get_query_engine(app, streaming=False, top_k=top_k)
     resp = await qe.aquery(question)
